@@ -39,3 +39,11 @@ def conn(built_db):
     connection = connect(built_db.db_path, readonly=True)
     yield connection
     connection.close()
+
+
+@pytest.fixture()
+def mutable_db(built_db, tmp_path) -> Settings:
+    """A private copy of the built database (and its files) for tests that modify data."""
+    data_dir = tmp_path / "data"
+    shutil.copytree(built_db.data_dir, data_dir)
+    return Settings(data_dir=data_dir, request_delay_s=0, max_retries=1, timeout_s=5)

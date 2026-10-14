@@ -123,12 +123,17 @@ def read_document(conn: sqlite3.Connection, doc_id: int, start_page: int, max_pa
     doc = _row(
         conn.execute(
             "SELECT d.id AS doc_id, d.title, d.doc_type, d.party, d.page_count, d.status, d.source_url, "
-            "j.case_no FROM documents d JOIN judgments j ON j.id = d.judgment_id WHERE d.id = ?",
+            "d.twin_id, j.case_no FROM documents d JOIN judgments j ON j.id = d.judgment_id WHERE d.id = ?",
             (doc_id,),
         ).fetchone()
     )
     if doc is None:
         raise NotFoundError(f"document {doc_id} not found")
+    twin_id = doc.pop("twin_id")
+    if doc["status"] == "skipped" and twin_id is not None:
+        # Scanned original: its text lives on the _OCR sibling.
+        twin = read_document(conn, twin_id, start_page, max_pages)
+        return {**twin, "doc_id": doc_id, "text_from_doc_id": twin_id, "source_url": doc["source_url"]}
     count = max(1, min(max_pages, MAX_PAGES_PER_READ))
     pages = conn.execute(
         "SELECT page_no, text, method AS text_source FROM pages WHERE doc_id = ? AND page_no >= ? "

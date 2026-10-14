@@ -66,6 +66,20 @@ def crawl(conn: sqlite3.Connection, settings: Settings, client: PoliteClient, *,
     return {"judgments": ok, "failed": failed}
 
 
+def reparse(conn: sqlite3.Connection, settings: Settings) -> dict:
+    """Re-run parsing/classification over saved HTML (no network), e.g. after parser fixes."""
+    ok, failed = 0, []
+    for path in sorted(settings.raw_html_dir.glob("*.html")):
+        judgment_id = int(path.stem)
+        try:
+            ingest_detail(conn, path.read_text(encoding="utf-8"), judgment_id)
+            ok += 1
+        except (ValueError, sqlite3.IntegrityError) as exc:
+            log.error("reparse %d failed: %s", judgment_id, exc)
+            failed.append(judgment_id)
+    return {"judgments": ok, "failed": failed}
+
+
 def _pending_docs(conn: sqlite3.Connection, statuses: tuple[str, ...], limit: int | None) -> list[sqlite3.Row]:
     marks = ",".join("?" * len(statuses))
     sql = f"SELECT id, judgment_id, file_path, is_ocr_variant FROM documents WHERE status IN ({marks}) ORDER BY judgment_id DESC, ord"  # noqa: S608

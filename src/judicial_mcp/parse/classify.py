@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from judicial_mcp.models import AttachmentRef, DocumentMeta
 from judicial_mcp.parse.detail import roc_to_iso
 
-OCR_SUFFIX = "_OCR"
+_OCR_SUFFIX_RE = re.compile(r"\s*[_＿]\s*OCR\s*$")  # also full-width ＿ and stray spaces
 
 _SECTION_TYPES = {
     "意見書": "opinion",
@@ -32,10 +32,19 @@ DOC_TYPE_LABELS = {
     "filing": "其他書狀",
 }
 
-_OPINION_RE = re.compile(r"([一-鿿])大法官([一-鿿]{1,3}?)提出之(.*?)意見書")
-_ROC_COMPACT_IN_TITLE = re.compile(r"(?<!\d)(1\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))(?!\d)")
+# Author is the first "X大法官YY提出"; titles vary: "提出之協同意見書", "提出協同意見書",
+# "提出，A大法官…加入之不同意見書".
+_OPINION_AUTHOR_RE = re.compile(r"([一-鿿])大法官([一-鿿]{1,3}?)(?:共同)?提出")
+_OPINION_TYPE_RE = re.compile(r"(部分協同部分不同|部分不同|部分協同|協同|不同)意見書")
+# ROC dates written compactly in titles: 1100511 (yyy) or 990505 (yy).
+_ROC_COMPACT_IN_TITLE = re.compile(r"(?<!\d)((?:1\d{2}|[89]\d)(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))(?!\d)")
+_OPINION_FULLNAME_RE = re.compile(r"判決([一-鿿]{2,4})大法官(?:共同)?提出")
+_PERSON_TITLES = "副教授|助理教授|教授|副研究員|助研究員|研究員|法官|會計師|律師|博士|先生|女士"
+_PERSON_NAME_RE = re.compile(rf"^(?:專家學者)?([一-鿿]{{2,4}}?)(?:{_PERSON_TITLES}|\d|之)")
+_DASH_NAME_RE = re.compile(rf"-\s*([一-鿿]{{2,4}}?)(?:{_PERSON_TITLES}|[（(_＿\s]|$)")
+_REPRESENTATIVE_RE = re.compile(rf"代表([一-鿿]{{2,4}}?)(?:{_PERSON_TITLES})")
+_LEADING_ORG_RE = re.compile(r"^([一-鿿（）()]+?)(?=\d{6,7})")
 _AGENT_PARTY_RE = re.compile(r"^(?:聲請人|關係機關|相對人|關係人)(.+?)之(?:共同)?(?:訴訟)?代理人")
-_EXPERT_RE = re.compile(r"^專家學者(.+?)(?:教授|副教授|助理教授|研究員|副研究員|博士|律師|先生|女士)?之")
 _LEADING_PARTY_RE = re.compile(r"^([一-鿿（）()]+?)(?=1\d{6}|解釋|統一解釋|聲請|答辯|補充)")
 
 
@@ -59,10 +68,18 @@ def _title_type(title: str, group: str | None) -> str:
 
 
 def _party(title: str, doc_type: str) -> str | None:
-    for pattern in (_AGENT_PARTY_RE, _EXPERT_RE):
-        match = pattern.match(title)
-        if match:
-            return match.group(1).strip()
+    match = _AGENT_PARTY_RE.match(title)
+    if match:
+        return match.group(1).strip()
+    if doc_type in {"expert_opinion", "slides"}:
+        for pattern in (_DASH_NAME_RE, _REPRESENTATIVE_RE):
+            match = pattern.search(title)
+            if match:
+                return match.group(1)
+        for pattern in (_PERSON_NAME_RE, _LEADING_ORG_RE):
+            match = pattern.match(title)
+            if match:
+                return match.group(1)
     if doc_type in {"petition", "response", "filing", "amicus"}:
         match = _LEADING_PARTY_RE.match(title)
         if match:
@@ -71,16 +88,17 @@ def _party(title: str, doc_type: str) -> str | None:
 
 
 def classify(ref: AttachmentRef) -> DocumentMeta:
-    is_ocr = ref.title.endswith(OCR_SUFFIX)
-    base_title = ref.title[: -len(OCR_SUFFIX)] if is_ocr else ref.title
+    is_ocr = bool(_OCR_SUFFIX_RE.search(ref.title))
+    base_title = _OCR_SUFFIX_RE.sub("", ref.title) if is_ocr else ref.title
     doc_type = _SECTION_TYPES.get(ref.section) or _title_type(base_title, ref.group)
 
     justice = opinion_type = None
     if doc_type == "opinion":
-        match = _OPINION_RE.search(base_title)
-        if match:
-            justice = match.group(1) + match.group(2)
-            opinion_type = match.group(3) or None
+        author = _OPINION_AUTHOR_RE.search(base_title)
+        full_name = None if author else _OPINION_FULLNAME_RE.search(base_title)
+        kind = _OPINION_TYPE_RE.search(base_title)
+        justice = author.group(1) + author.group(2) if author else (full_name.group(1) if full_name else None)
+        opinion_type = kind.group(1) if kind else None
 
     date_match = _ROC_COMPACT_IN_TITLE.search(base_title)
     return DocumentMeta(

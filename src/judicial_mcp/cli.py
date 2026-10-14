@@ -38,6 +38,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ocr.add_argument("--limit-pages", type=int)
     ocr.add_argument("--workers", type=int, default=4, help="parallel OCR processes (default 4)")
     ocr.add_argument("--upgrade-site-ocr", action="store_true", help="also re-OCR pages that only have the site's OCR text")
+    sub.add_parser("reparse", help="re-parse saved HTML pages (no network) after parser changes")
     sub.add_parser("index", help="rebuild the full-text index")
     update = sub.add_parser("update", help="crawl + download + extract + index (no OCR)")
     update.add_argument("--limit", type=int)
@@ -76,6 +77,8 @@ def _ingest(args: argparse.Namespace) -> dict:
             methods = (METHOD_PENDING, METHOD_SITE_OCR) if args.upgrade_site_ocr else (METHOD_PENDING,)
             report = lambda done, total: log.info("ocr %d/%d pages", done, total)  # noqa: E731
             return pipeline.ocr(conn, settings, methods=methods, limit_pages=args.limit_pages, workers=args.workers, progress=report)
+        if args.command == "reparse":
+            return pipeline.reparse(conn, settings)
         if args.command == "index":
             store.rebuild_index(conn)
             return {"indexed": True}

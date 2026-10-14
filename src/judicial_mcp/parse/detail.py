@@ -13,7 +13,7 @@ from judicial_mcp.models import AttachmentRef, Judgment, Paragraph, RelatedCase,
 
 _CASE_RE = re.compile(r"(\d{2,3})年憲判字第(\d+)號")
 _ROC_DATE_RE = re.compile(r"(\d{2,3})年(\d{1,2})月(\d{1,2})日")
-_ROC_COMPACT_RE = re.compile(r"^(1\d{2})(\d{2})(\d{2})$")
+_ROC_COMPACT_RE = re.compile(r"^(1\d{2}|[89]\d)(\d{2})(\d{2})$")
 _QUOTED_TITLE_RE = re.compile(r"「(.+)」")
 _PARAGRAPH_SECTIONS = ("主文", "理由")
 

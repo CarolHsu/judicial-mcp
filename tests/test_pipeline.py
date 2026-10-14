@@ -77,8 +77,8 @@ def test_crawl_records_failures(settings):
     assert report["judgments"] == 0 and len(report["failed"]) == 2
 
 
-def test_ocr_fills_pending_pages_and_updates_index(built_db, monkeypatch):
-    conn = connect(built_db.db_path)
+def test_ocr_fills_pending_pages_and_updates_index(mutable_db, monkeypatch):
+    conn = connect(mutable_db.db_path)
     conn.execute("UPDATE pages SET method='pending_ocr', text='' WHERE doc_id=473788 AND page_no=1")
     conn.commit()
 
@@ -88,7 +88,7 @@ def test_ocr_fills_pending_pages_and_updates_index(built_db, monkeypatch):
     monkeypatch.setattr("judicial_mcp.pdf.ocr.ocr_pages", fake_ocr)
     monkeypatch.setattr("judicial_mcp.pdf.ocr.ocr_available", lambda: True)
     progress = []
-    result = pipeline.ocr(conn, built_db, progress=lambda d, t: progress.append((d, t)))
+    result = pipeline.ocr(conn, mutable_db, progress=lambda d, t: progress.append((d, t)))
     assert result == {"ocr_pages": 1, "total_candidates": 1}
     assert progress == [(1, 1)]
     assert search.search_pages(conn, "獨特測試字串")[0]["doc_id"] == 473788
@@ -190,14 +190,25 @@ def test_download_aborts_when_transfer_exceeds_deadline(settings, tmp_path):
     assert not dest.with_suffix(".pdf.part").exists()
 
 
-def test_extract_redo_keeps_our_ocr_pages(built_db):
-    conn = connect(built_db.db_path)
+def test_extract_redo_keeps_our_ocr_pages(mutable_db):
+    conn = connect(mutable_db.db_path)
     conn.execute("UPDATE pages SET text='我們的OCR結果', method='ocr', confidence=0.9 WHERE doc_id=473763 AND page_no=2")
     conn.execute("UPDATE pages SET text='舊的文字' WHERE doc_id=473763 AND page_no=3")
     conn.commit()
-    result = pipeline.extract(conn, built_db, redo=True)
+    result = pipeline.extract(conn, mutable_db, redo=True)
     assert result["extracted"] == 3
     rows = dict(conn.execute("SELECT page_no, text FROM pages WHERE doc_id=473763 AND page_no IN (2, 3)").fetchall())
     assert rows[2] == "我們的OCR結果"
     assert rows[3] != "舊的文字"
     conn.close()
+
+
+def test_reparse_reclassifies_from_saved_html(settings):
+    conn = connect(settings.db_path)
+    pipeline.crawl(conn, settings, FakeClient(), limit=1)
+    conn.execute("UPDATE documents SET justice = NULL, status = 'extracted' WHERE doc_type = 'opinion'")
+    conn.commit()
+    assert pipeline.reparse(conn, settings) == {"judgments": 1, "failed": []}
+    rows = conn.execute("SELECT justice, status FROM documents WHERE doc_type = 'opinion'").fetchall()
+    assert rows and all(r["justice"] for r in rows)
+    assert all(r["status"] == "extracted" for r in rows)  # progress is preserved

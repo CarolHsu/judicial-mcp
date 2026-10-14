@@ -4,6 +4,19 @@
 爬下來、正規化進 SQLite，並以 MCP server 提供查詢。除了判決本文，**每筆判決附帶的 PDF（聲請書、答辯書、
 言詞辯論意旨書、專家諮詢意見書、法庭之友意見書、大法官意見書、判決摘要…）也都轉成文字並可全文搜尋**。
 
+## 資料現況（2026-10-14 建置）
+
+| 項目 | 數量 |
+|---|---|
+| 判決 | 59 筆（111年憲判字第1號 ～ 115年，2022-02 ～ 2026-10） |
+| 理由/主文段落 | 3,694 段 |
+| 附件文件 | 1,766 份（另 115 份為掃描原檔或判決 PDF，文字取自 `_OCR` 版或網頁） |
+| 附件頁數 | 30,937 頁：原生文字 7,266、Apple Vision OCR 23,295、保留網站 OCR 376 |
+| 空白頁 | 486 頁（OCR 後仍無文字，多為空白頁或圖片） |
+| 資料庫大小 | 約 530 MB（`data/judicial.db`），PDF 原檔約 1.8 GB |
+
+完整重建約需 4–5 小時（下載約 2 小時、OCR 約 2.5 小時，M4 MacBook）。
+
 ## 安裝到 Claude（本機）
 
 需求：macOS、[uv](https://docs.astral.sh/uv/)。
@@ -87,6 +100,8 @@ uv run judicial-mcp update                    # crawl + download + extract + ind
 uv run judicial-mcp ocr                       # OCR 沒有文字層的頁面（macOS）
 uv run judicial-mcp ocr --upgrade-site-ocr    # 也重新辨識「網站 _OCR 版」的頁面，品質較好
 uv run judicial-mcp stats                     # 看進度
+uv run judicial-mcp reparse                   # 改了 parser 後，從存下的網頁重新解析（不連網）
+uv run judicial-mcp extract --redo            # 改了文字清理規則後重新抽文字（保留已 OCR 的頁）
 ```
 
 資料放在專案的 `data/`。若改用 `uv tool install` / `uvx` 等非專案目錄的安裝方式，請設定環境變數 `JUDICIAL_MCP_DATA` 指向資料目錄：
@@ -101,7 +116,8 @@ uv run judicial-mcp stats                     # 看進度
 - 每一頁獨立判斷：有文字層就直接抽；沒有（純掃描）就標記 `pending_ocr`，交給 Apple Vision OCR。
 - 網站附的 OCR 品質普通（例如「憲法」辨識成「蕙法」），`--upgrade-site-ocr` 會用 Apple Vision 重做；
   若新結果字數明顯較少則保留原本的。
-- 清理書狀雜訊：稿紙左側行號（1 2 3 … 26）、數字被拆開（`1 1 1 年` → `111年`）、中文斷行、康熙部首字。
+- 清理雜訊：依版面位置移除邊欄行號（書狀的 1–26、大法官意見書的連續行號 909、910…）、
+  頁碼、網站 OCR 拆開的數字（`1 1 1 年` → `111年`）、中文斷行、康熙部首字。
 - 每頁記錄文字來源（`native` / `site_ocr` / `ocr`），查詢結果會回傳 `text_source`，方便判斷可信度。
 
 ### 搜尋

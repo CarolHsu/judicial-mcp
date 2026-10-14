@@ -114,3 +114,18 @@ def test_like_wildcards_are_literal(conn):
     assert query.find_by_statute(conn, "%") == []
     assert query.list_judgments(conn, keyword="_") == []
     assert search.search_pages(conn, "意見", party="%") == []
+
+
+def test_read_skipped_original_reads_its_ocr_twin(mutable_db):
+    from judicial_mcp.db import store
+    from judicial_mcp.models import PageText
+
+    rw = connect(mutable_db.db_path)
+    rw.execute("UPDATE documents SET status='extracted', page_count=1 WHERE id=473795")
+    store.replace_pages(rw, 473795, [PageText(1, "雙胞胎OCR內容", "ocr")])
+    rw.close()
+    ro = connect(mutable_db.db_path, readonly=True)
+    doc = query.read_document(ro, 473794, 1, 5)
+    assert doc["text_from_doc_id"] == 473795
+    assert doc["pages"][0]["text"] == "雙胞胎OCR內容"
+    ro.close()
