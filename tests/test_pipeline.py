@@ -171,3 +171,20 @@ def test_ocr_unavailable_raises(built_db, monkeypatch):
     conn = connect(built_db.db_path)
     with pytest.raises(OcrUnavailableError):
         pipeline.ocr(conn, built_db)
+
+
+def test_download_aborts_when_transfer_exceeds_deadline(settings, tmp_path):
+    import time as _time
+
+    class SlowStream(httpx.SyncByteStream):
+        def __iter__(self):
+            yield b"%PDF"
+            _time.sleep(0.3)
+            yield b"more"
+
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, stream=SlowStream()))
+    dest = tmp_path / "slow.pdf"
+    with PoliteClient(settings, transport=transport, max_download_s=0.1) as client, pytest.raises(FetchError):
+        client.download("https://example.test/download.aspx?id=1", dest)
+    assert not dest.exists()
+    assert not dest.with_suffix(".pdf.part").exists()

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import socket
 import ssl
+import threading
 import time
 from pathlib import Path
 
@@ -27,11 +29,52 @@ def _ssl_context() -> ssl.SSLContext:
     return ctx
 
 
+# Total time allowed for one file. The site sometimes stalls mid-transfer with the TLS
+# connection still open, so the per-read timeout never fires; this bounds it.
+MAX_DOWNLOAD_SECONDS = 600.0
+
+
+class _Watchdog:
+    """Shut down the response's socket if a transfer exceeds its deadline.
+
+    A blocked SSL read cannot be interrupted from the reading thread, so a timer
+    thread shuts the socket down, which makes the read fail and the retry kick in.
+    """
+
+    def __init__(self, response: httpx.Response, seconds: float) -> None:
+        self._response = response
+        self._timer = threading.Timer(seconds, self._fire)
+        self._timer.daemon = True
+
+    def _fire(self) -> None:
+        stream = self._response.extensions.get("network_stream")
+        sock = stream.get_extra_info("socket") if stream is not None else None
+        log.warning("download stalled; aborting %s", self._response.request.url)
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass  # already closed
+
+    def __enter__(self) -> _Watchdog:
+        self._timer.start()
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self._timer.cancel()
+
+
 class PoliteClient:
     """Rate-limited client with retries. Use as a context manager."""
 
-    def __init__(self, settings: Settings, transport: httpx.BaseTransport | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        transport: httpx.BaseTransport | None = None,
+        max_download_s: float = MAX_DOWNLOAD_SECONDS,
+    ) -> None:
         self._settings = settings
+        self._max_download_s = max_download_s
         self._client = httpx.Client(
             transport=transport,
             verify=_ssl_context(),
@@ -81,11 +124,14 @@ class PoliteClient:
 
         def action() -> tuple[str, int]:
             size = 0
-            with self._client.stream("GET", url) as response:
+            deadline = time.monotonic() + self._max_download_s
+            with self._client.stream("GET", url) as response, _Watchdog(response, self._max_download_s):
                 response.raise_for_status()
                 content_type = response.headers.get("content-type", "")
                 with tmp.open("wb") as fh:
                     for chunk in response.iter_bytes(1 << 16):
+                        if time.monotonic() > deadline:
+                            raise httpx.ReadTimeout(f"download exceeded {self._max_download_s:.0f}s")
                         fh.write(chunk)
                         size += len(chunk)
             tmp.replace(dest)
