@@ -55,3 +55,22 @@ def test_ocr_real_page():
     (page,) = ocr_pages(FIXTURES / "position_table.pdf", [1])
     assert "大法官" in page.text
     assert page.confidence and page.confidence > 0.5
+
+
+def test_native_extraction_drops_running_line_numbers():
+    import pymupdf
+
+    from judicial_mcp.pdf.extract import page_text_without_margin_numbers
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    font = pymupdf.Font("cjk")
+    writer = pymupdf.TextWriter(page.rect)
+    for i, (num, body) in enumerate([("909", "該規定其立法乃屬逾越"), ("910", "原則參見理由")]):
+        y = 100 + i * 20
+        writer.append((54, y), num, font=font, fontsize=11)
+        writer.append((90, y), body, font=font, fontsize=11)
+    writer.write_text(page)
+    text = page_text_without_margin_numbers(page)
+    assert "909" not in text and "910" not in text
+    assert "該規定其立法乃屬逾越" in text

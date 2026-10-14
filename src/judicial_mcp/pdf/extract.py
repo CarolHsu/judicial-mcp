@@ -9,6 +9,7 @@ import pymupdf
 
 from judicial_mcp.models import PageText
 from judicial_mcp.pdf.clean import clean_page_text
+from judicial_mcp.pdf.margins import drop_margin_numbers
 
 # A page with fewer meaningful characters than this is treated as image-only.
 MIN_TEXT_CHARS = 20
@@ -28,6 +29,23 @@ def meaningful_chars(text: str) -> int:
     return len(_MEANINGFUL_RE.findall(text))
 
 
+def page_text_without_margin_numbers(page: pymupdf.Page) -> str:
+    """Page text in reading order, one line per PDF text line, without margin line numbers."""
+    lines = [
+        line
+        for block in page.get_text("dict")["blocks"]
+        if block.get("type") == 0
+        for line in block["lines"]
+    ]
+    spans = [span for line in lines for span in line["spans"]]
+    kept = {
+        id(span)
+        for span in drop_margin_numbers(spans, lambda s: s["text"], lambda s: (s["bbox"][0], s["bbox"][2]), page.rect.width)
+    }
+    rendered = ("".join(span["text"] for span in line["spans"] if id(span) in kept) for line in lines)
+    return "\n".join(rendered)
+
+
 def extract_pages(path: Path, *, site_ocr: bool = False) -> tuple[PageText, ...]:
     """Extract and clean the text layer of every page.
 
@@ -41,7 +59,7 @@ def extract_pages(path: Path, *, site_ocr: bool = False) -> tuple[PageText, ...]
     with doc:
         pages = []
         for index, page in enumerate(doc, start=1):
-            text = clean_page_text(page.get_text(), site_ocr=site_ocr)
+            text = clean_page_text(page_text_without_margin_numbers(page), site_ocr=site_ocr)
             if meaningful_chars(text) >= MIN_TEXT_CHARS:
                 pages.append(PageText(page_no=index, text=text, method=text_method))
             else:

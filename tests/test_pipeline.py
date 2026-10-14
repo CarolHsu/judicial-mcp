@@ -188,3 +188,16 @@ def test_download_aborts_when_transfer_exceeds_deadline(settings, tmp_path):
         client.download("https://example.test/download.aspx?id=1", dest)
     assert not dest.exists()
     assert not dest.with_suffix(".pdf.part").exists()
+
+
+def test_extract_redo_keeps_our_ocr_pages(built_db):
+    conn = connect(built_db.db_path)
+    conn.execute("UPDATE pages SET text='我們的OCR結果', method='ocr', confidence=0.9 WHERE doc_id=473763 AND page_no=2")
+    conn.execute("UPDATE pages SET text='舊的文字' WHERE doc_id=473763 AND page_no=3")
+    conn.commit()
+    result = pipeline.extract(conn, built_db, redo=True)
+    assert result["extracted"] == 3
+    rows = dict(conn.execute("SELECT page_no, text FROM pages WHERE doc_id=473763 AND page_no IN (2, 3)").fetchall())
+    assert rows[2] == "我們的OCR結果"
+    assert rows[3] != "舊的文字"
+    conn.close()

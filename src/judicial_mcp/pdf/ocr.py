@@ -13,6 +13,7 @@ import pymupdf
 from judicial_mcp.models import PageText
 from judicial_mcp.pdf.clean import clean_page_text
 from judicial_mcp.pdf.extract import METHOD_OCR
+from judicial_mcp.pdf.margins import drop_margin_numbers
 
 log = logging.getLogger(__name__)
 
@@ -48,7 +49,8 @@ def is_margin_line_number(obs: Observation) -> bool:
 
 
 def observations_to_page(page_no: int, observations: Sequence[Observation]) -> PageText:
-    body = [o for o in observations if not is_margin_line_number(o)]
+    adaptive = drop_margin_numbers(observations, lambda o: o[0], lambda o: (o[2][0], o[2][0] + o[2][2]), 1.0)
+    body = [o for o in adaptive if not is_margin_line_number(o)]
     raw = "\n".join(o[0] for o in body)
     confidence = sum(o[1] for o in body) / len(body) if body else None
     return PageText(page_no=page_no, text=clean_page_text(raw), method=METHOD_OCR, confidence=confidence)

@@ -17,7 +17,7 @@ from judicial_mcp.models import PageText
 from judicial_mcp.parse.classify import classify, pair_ocr_twins
 from judicial_mcp.parse.detail import parse_detail
 from judicial_mcp.parse.listing import parse_listing
-from judicial_mcp.pdf.extract import METHOD_PENDING, PdfOpenError, extract_pages, meaningful_chars
+from judicial_mcp.pdf.extract import METHOD_OCR, METHOD_PENDING, PdfOpenError, extract_pages, meaningful_chars
 
 log = logging.getLogger(__name__)
 
@@ -102,12 +102,15 @@ def download(conn: sqlite3.Connection, settings: Settings, client: PoliteClient,
     return {"downloaded": done, "failed": failed}
 
 
-def extract(conn: sqlite3.Connection, settings: Settings, *, limit: int | None = None) -> dict:
+def extract(conn: sqlite3.Connection, settings: Settings, *, limit: int | None = None, redo: bool = False) -> dict:
+    """Extract text layers. With `redo`, re-extract processed documents too (after cleaning-rule
+    changes), keeping pages already OCR'd by us so that work is not repeated."""
+    statuses = (store.STATUS_DOWNLOADED, store.STATUS_EXTRACTED) if redo else (store.STATUS_DOWNLOADED,)
     done, failed, pending_pages = 0, 0, 0
-    for row in _pending_docs(conn, (store.STATUS_DOWNLOADED,), limit):
+    for row in _pending_docs(conn, statuses, limit):
         path = settings.data_dir / row["file_path"]
         try:
-            pages = extract_pages(path, site_ocr=bool(row["is_ocr_variant"]))
+            pages = _keep_our_ocr(conn, row["id"], extract_pages(path, site_ocr=bool(row["is_ocr_variant"])))
             store.replace_pages(conn, row["id"], pages)
             pending_pages += sum(1 for p in pages if p.method == METHOD_PENDING)
             done += 1
@@ -116,6 +119,14 @@ def extract(conn: sqlite3.Connection, settings: Settings, *, limit: int | None =
             store.mark_failed(conn, row["id"], str(exc), status=store.STATUS_EXTRACT_FAILED)
             failed += 1
     return {"extracted": done, "failed": failed, "pages_needing_ocr": pending_pages}
+
+
+def _keep_our_ocr(conn: sqlite3.Connection, doc_id: int, fresh: tuple[PageText, ...]) -> tuple[PageText, ...]:
+    ocr_rows = conn.execute(
+        "SELECT page_no, text, confidence FROM pages WHERE doc_id = ? AND method = ?", (doc_id, METHOD_OCR)
+    ).fetchall()
+    ours = {r["page_no"]: PageText(r["page_no"], r["text"], METHOD_OCR, r["confidence"]) for r in ocr_rows}
+    return tuple(ours.get(p.page_no, p) for p in fresh)
 
 
 def ocr(

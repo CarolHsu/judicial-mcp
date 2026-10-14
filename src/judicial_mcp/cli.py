@@ -32,7 +32,8 @@ def _build_parser() -> argparse.ArgumentParser:
     crawl.add_argument("--limit", type=int)
     download = sub.add_parser("download", help="download attachment PDFs")
     download.add_argument("--limit", type=int)
-    sub.add_parser("extract", help="extract text from downloaded PDFs")
+    extract = sub.add_parser("extract", help="extract text from downloaded PDFs")
+    extract.add_argument("--redo", action="store_true", help="re-extract processed documents (keeps our OCR pages)")
     ocr = sub.add_parser("ocr", help="OCR image-only pages (macOS Apple Vision)")
     ocr.add_argument("--limit-pages", type=int)
     ocr.add_argument("--workers", type=int, default=4, help="parallel OCR processes (default 4)")
@@ -68,7 +69,7 @@ def _ingest(args: argparse.Namespace) -> dict:
             with PoliteClient(settings) as client:
                 return pipeline.download(conn, settings, client, limit=args.limit)
         if args.command == "extract":
-            result = pipeline.extract(conn, settings)
+            result = pipeline.extract(conn, settings, redo=args.redo)
             store.rebuild_index(conn)
             return result
         if args.command == "ocr":
