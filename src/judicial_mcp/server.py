@@ -57,15 +57,16 @@ def _tool_errors(fn: Callable[..., Any]) -> Callable[..., Any]:
 
 def build_server(db_path: Path) -> MCPServer:
     server = MCPServer(name="judicial-mcp", title="憲法法庭判決", instructions=INSTRUCTIONS, version="0.1.0")
-    state: dict[str, sqlite3.Connection] = {}
-    lock = threading.Lock()
+    local = threading.local()
 
     def db() -> sqlite3.Connection:
+        # Sync tools run concurrently in worker threads, and a sqlite3 connection must not be used by
+        # two threads at once (reads come back empty or garbled), so each thread gets its own.
         # Opened lazily so the server can start (and report a clear error) before data exists.
-        with lock:
-            if "conn" not in state:
-                state["conn"] = connect(db_path, readonly=True)
-            return state["conn"]
+        conn = getattr(local, "conn", None)
+        if conn is None:
+            conn = local.conn = connect(db_path, readonly=True)
+        return conn
 
     @server.tool(annotations=_READ_ONLY)
     @_tool_errors

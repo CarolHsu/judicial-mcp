@@ -1,5 +1,6 @@
 import json
 
+import anyio
 import pytest
 from mcp import Client
 
@@ -74,3 +75,19 @@ async def test_not_found_is_tool_error(server):
         result = await client.call_tool("get_judgment", {"case": "999年憲判字第1號"})
     assert result.is_error
     assert "找不到判決" in result.content[0].text
+
+
+async def test_concurrent_tool_calls_do_not_corrupt_reads(server):
+    # Sync tools run in worker threads; parallel calls must not share one sqlite3 connection.
+    failures = []
+
+    async def read(client):
+        result = await client.call_tool("read_document", {"doc_id": 473763, "max_pages": 20})
+        if result.is_error:
+            failures.append(result.content[0].text)
+
+    async with Client(server) as client:
+        async with anyio.create_task_group() as tg:
+            for _ in range(200):
+                tg.start_soon(read, client)
+    assert failures == []
